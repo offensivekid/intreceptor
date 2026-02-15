@@ -1108,6 +1108,71 @@ app.post('/api/admin/change-password', requireAdmin, (req, res) => {
   }
 });
 
+// ============= ADMIN PASSWORD RESET (EMERGENCY) =============
+
+// Специальный endpoint для сброса пароля админа через секретный токен
+// Используй: POST /api/admin/reset-password с секретным токеном в заголовке
+app.post('/api/admin/reset-password', (req, res) => {
+  try {
+    const resetToken = req.headers['x-reset-token'];
+    const expectedToken = process.env.RESET_TOKEN || 'CHANGE_ME_IN_ENV';
+    
+    if (resetToken !== expectedToken) {
+      return res.status(403).json({ error: 'Invalid reset token' });
+    }
+    
+    const newPassword = req.body.newPassword;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    
+    const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+    const hash = bcrypt.hashSync(newPassword, 12);
+    
+    const result = db.prepare(`
+      UPDATE users 
+      SET password_hash = ? 
+      WHERE username = ? AND is_admin = 1
+    `).run(hash, adminUsername);
+    
+    if (result.changes === 0) {
+      return res.status(404).json({ error: 'Admin user not found' });
+    }
+    
+    console.log(`✅ Admin password reset for user: ${adminUsername}`);
+    
+    res.json({ 
+      success: true, 
+      message: `Password updated for ${adminUsername}`,
+      username: adminUsername 
+    });
+  } catch (err) {
+    console.error('Password reset error:', err);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// Endpoint для проверки существования админа
+app.get('/api/admin/check', (req, res) => {
+  try {
+    const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+    const admin = db.prepare('SELECT username, email, is_admin FROM users WHERE username = ?').get(adminUsername);
+    
+    if (admin) {
+      res.json({ 
+        exists: true, 
+        username: admin.username,
+        email: admin.email,
+        isAdmin: Boolean(admin.is_admin)
+      });
+    } else {
+      res.json({ exists: false });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Check failed' });
+  }
+});
+
 // ============= ERROR HANDLER =============
 
 app.use((err, req, res, next) => {
